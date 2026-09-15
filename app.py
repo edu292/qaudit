@@ -1,79 +1,141 @@
-from datetime import datetime
-from enum import StrEnum
+from datetime import datetime, timedelta
 
 import streamlit as st
-from sqlalchemy import ForeignKey
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from models import (
+    Checklist,
+    ItemStatus,
+    Ncs,
+    NCStatus,
+    Severity,
+    SmtpConfig,
+    User,
+    init_db,
+)
 
-class ItemStatus(StrEnum):
-    PENDING = "Pendente"
-    NON_CONFORMANT = "Não Conforme"
-    CONFORMANT = "Conforme"
-
-
-class NCStatus(StrEnum):
-    DRAFT = "Rascunho"
-    OPEN = "Aberta"
-    CLOSED = "Fechada"
-    ESCALATED = "Escalada"
-    CLOSED_EXCEPTION = "Fechada por Exceção"
-
-
-class Base(DeclarativeBase):
-    pass
-
-
-class User(Base):
-    __tablename__ = "user"
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(unique=True, nullable=False)
-    email: Mapped[str] = mapped_column(nullable=False)
-    is_manager: Mapped[bool] = mapped_column(default=False)
-
-
-class SmtpConfig(Base):
-    __tablename__ = "smtp_config"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    server: Mapped[str] = mapped_column(nullable=True)
-    port: Mapped[int] = mapped_column(nullable=True)
-    user: Mapped[str] = mapped_column(nullable=True)
-    password: Mapped[str] = mapped_column(nullable=True)
-
-
-class Checklist(Base):
-    __tablename__ = "checklist"
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    question: Mapped[str] = mapped_column(nullable=False)
-    status: Mapped[str] = mapped_column(default=ItemStatus.PENDING.value)
-
-    ncs: Mapped[list[Ncs]] = relationship(
-        back_populates="checklist", cascade="all, delete-orphan"
-    )
-
-
-class Ncs(Base):
-    __tablename__ = "ncs"
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    item_id: Mapped[int] = mapped_column(ForeignKey("checklist.id"), nullable=False)
-    responsible_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=True)
-    details: Mapped[str] = mapped_column(nullable=True)
-    deadline: Mapped[datetime] = mapped_column(nullable=True)
-    status: Mapped[str] = mapped_column(default=NCStatus.DRAFT.value)
-
-    checklist: Mapped[Checklist] = relationship(back_populates="ncs")
-
-
-tab_main, tab_users, tab_config = st.tabs(("Checklist", "Usuários", "Configuração"))
+tab_main, tab_severities, tab_users, tab_config = st.tabs(
+    ("Checklist", "Categorias", "Usuários", "Configuração")
+)
 conn = st.connection("db", type="sql", url="sqlite:///audit.db")
 
 
-def init_db():
-    Base.metadata.create_all(conn.engine)
+init_db(conn)
 
 
-init_db()
+def save_checklist():
+    changes = st.session_state.checklist_editor
+
+    with conn.session as s:
+        for added in changes["added_rows"]:
+            new_item = Checklist(
+                question=added["question"],
+                status=added["status"],
+            )
+            s.add(new_item)
+            s.flush()
+
+            if new_item.status == ItemStatus.NON_CONFORMANT:
+                s.add(Ncs(item_id=new_item.id))
+
+        for row_idx, edits in changes["edited_rows"].items():
+            row_id = int(df_check.iloc[row_idx]["id"])
+            item = s.get(Checklist, row_id)
+
+            if item:
+                if "question" in edits:
+                    item.question = edits["question"]
+
+                if "status" in edits:
+                    item.status = edits["status"]
+
+                    if item.status == ItemStatus.NON_CONFORMANT:
+                        exists = s.query(Ncs).filter_by(item_id=row_id).first()
+                        if not exists:
+                            s.add(Ncs(item_id=row_id))
+
+        for row_idx in changes["deleted_rows"]:
+            row_id = int(df_check.iloc[row_idx]["id"])
+            item = s.get(Checklist, row_id)
+            if item:
+                s.delete(item)
+
+        s.commit()
+
+    st.rerun()
+
+
+def save_users():
+    changes = st.session_state.user_editor
+
+    try:
+        with conn.session as s:
+            for added in changes["added_rows"]:
+                new_user = User(
+                    name=added["name"],
+                    email=added["email"],
+                    is_manager=added["is_manager"],
+                )
+                s.add(new_user)
+
+            for row_idx, edits in changes["edited_rows"].items():
+                row_id = int(df_users.iloc[row_idx]["id"])
+                user = s.get(User, row_id)
+
+                if user:
+                    if "name" in edits:
+                        user.name = edits["name"]
+                    if "email" in edits:
+                        user.email = edits["email"]
+                    if "is_manager" in edits:
+                        user.is_manager = edits["is_manager"]
+
+            for row_idx in changes["deleted_rows"]:
+                row_id = int(df_users.iloc[row_idx]["id"])
+                user = s.get(User, row_id)
+                if user:
+                    s.delete(user)
+
+            s.commit()
+
+        st.toast("Usuários salvos com sucesso!", icon="✅")
+        st.rerun()
+
+    except IntegrityError:
+        st.error(
+            "Erro ao salvar: O nome de usuário já existe. Os nomes devem ser únicos."
+        )
+
+
+def save_severities():
+    changes = st.session_state.severity_editor
+    try:
+        with conn.session as s:
+            for added in changes["added_rows"]:
+                s.add(
+                    Severity(
+                        name=added["name"],
+                        days=added["days"],
+                        hours=added["hours"],
+                        minutes=added["minutes"],
+                    )
+                )
+            for row_idx, edits in changes["edited_rows"].items():
+                row_id = int(df_severities.iloc[row_idx]["id"])
+                sev = s.get(Severity, row_id)
+                if sev:
+                    for k, v in edits.items():
+                        setattr(sev, k, v)
+            for row_idx in changes["deleted_rows"]:
+                row_id = int(df_severities.iloc[row_idx]["id"])
+                sev = s.get(Severity, row_id)
+                if sev:
+                    s.delete(sev)
+            s.commit()
+        st.toast("Gravidades salvas com sucesso!", icon="✅")
+    except IntegrityError:
+        st.error("O nome da gravidade deve ser único.")
+
 
 with tab_main:
     st.title("Checklist e Auditoria")
@@ -94,6 +156,7 @@ with tab_main:
         num_rows="dynamic",
         hide_index=True,
         width="stretch",
+        on_change=save_checklist,
         column_config={
             "id": st.column_config.NumberColumn("ID", disabled=True),
             "question": st.column_config.TextColumn("Pergunta", required=True),
@@ -106,64 +169,26 @@ with tab_main:
         },
     )
 
-    if st.button("Salvar Alterações"):
-        changes = st.session_state.checklist_editor
-
-        with conn.session as s:
-            for added in changes["added_rows"]:
-                new_item = Checklist(
-                    question=added.get("question"),
-                    status=added.get("status", ItemStatus.PENDING),
-                )
-                s.add(new_item)
-                s.flush()
-
-                if new_item.status == ItemStatus.NON_CONFORMANT:
-                    s.add(Ncs(item_id=new_item.id))
-
-            for row_idx, edits in changes["edited_rows"].items():
-                row_id = int(df_check.iloc[row_idx]["id"])
-                item = s.get(Checklist, row_id)
-
-                if item:
-                    if "question" in edits:
-                        item.question = edits["question"]
-
-                    if "status" in edits:
-                        item.status = edits["status"]
-
-                        if item.status == ItemStatus.NON_CONFORMANT:
-                            exists = s.query(Ncs).filter_by(item_id=row_id).first()
-                            if not exists:
-                                s.add(Ncs(item_id=row_id))
-
-            for row_idx in changes["deleted_rows"]:
-                row_id = int(df_check.iloc[row_idx]["id"])
-                item = s.get(Checklist, row_id)
-                if item:
-                    s.delete(item)
-
-            s.commit()
-
-        st.toast("Alterações salvas com sucesso!", icon="✅")
-        st.rerun()
-
     st.divider()
 
     st.subheader("Gestão de Não Conformidades (NCs)")
 
     with conn.session as s:
-        all_ncs = s.query(Ncs).all()
+        ncs = s.query(Ncs).all()
         users = s.query(User).all()
-        user_map = {u.name: u.id for u in users}
-        user_names = ["Selecione..."] + list(user_map.keys())
+        severities = s.query(Severity).all()
 
-        if not all_ncs:
+        user_map = {u.name: u.id for u in users}
+        sev_map = {sev.name: sev for sev in severities}
+
+        user_names = ["Selecione..."] + list(user_map.keys())
+        sev_names = ["Selecione..."] + list(sev_map.keys())
+
+        if not ncs:
             st.info("Nenhuma Não Conformidade registrada.")
         else:
-            for nc in all_ncs:
+            for nc in ncs:
                 checklist_item = s.get(Checklist, nc.item_id)
-
                 is_draft = nc.status == NCStatus.DRAFT.value
                 expander_title = f"NC #{nc.id} | Item {nc.item_id}: {checklist_item.question} [{nc.status}]"
 
@@ -173,37 +198,45 @@ with tab_main:
                             "Detalhes da Ocorrência", value=nc.details or "", height=120
                         )
 
-                        col1, col2, col3, col4 = st.columns(4)
+                        col1, col2, col3 = st.columns(3)
 
                         with col1:
-                            current_user_name = next(
+                            curr_user = next(
                                 (u.name for u in users if u.id == nc.responsible_id),
                                 "Selecione...",
                             )
                             sel_user = st.selectbox(
                                 "Responsável",
                                 options=user_names,
-                                index=user_names.index(current_user_name),
+                                index=user_names.index(curr_user),
                             )
 
                         with col2:
-                            dt_val = nc.deadline or datetime.now()
-                            d = st.date_input(
-                                "Data Limite", value=dt_val.date(), key=f"d_{nc.id}"
+                            curr_sev = next(
+                                (
+                                    sv.name
+                                    for sv in severities
+                                    if sv.id == nc.severity_id
+                                ),
+                                "Selecione...",
+                            )
+                            sel_sev = st.selectbox(
+                                "Gravidade (Calcula Prazo)",
+                                options=sev_names,
+                                index=sev_names.index(curr_sev),
                             )
 
                         with col3:
-                            dt_val = nc.deadline or datetime.now()
-                            t = st.time_input(
-                                "Hora Limite", value=dt_val.time(), key=f"t_{nc.id}"
-                            )
-
-                        with col4:
                             status_options = [e.value for e in NCStatus]
                             sel_status = st.selectbox(
                                 "Status",
                                 options=status_options,
                                 index=status_options.index(nc.status),
+                            )
+
+                        if nc.deadline:
+                            st.caption(
+                                f"**Prazo Calculado:** {nc.deadline.strftime('%d/%m/%Y %H:%M')} (Abertura: {nc.timestamp.strftime('%d/%m/%Y %H:%M')})"
                             )
 
                         if st.form_submit_button("Salvar NC"):
@@ -214,28 +247,66 @@ with tab_main:
                                 if sel_user != "Selecione..."
                                 else None
                             )
-                            nc_to_update.deadline = datetime.combine(d, t)
+
+                            # Deadline Calculation
+                            if sel_sev != "Selecione...":
+                                chosen_sev = sev_map[sel_sev]
+                                nc_to_update.severity_id = chosen_sev.id
+                                nc_to_update.deadline = (
+                                    nc_to_update.timestamp
+                                    + timedelta(
+                                        days=chosen_sev.days,
+                                        hours=chosen_sev.hours,
+                                        minutes=chosen_sev.minutes,
+                                    )
+                                )
+                            else:
+                                nc_to_update.severity_id = None
+                                nc_to_update.deadline = None
+
+                            if sel_status in (
+                                NCStatus.CLOSED.value,
+                                NCStatus.CLOSED_EXCEPTION.value,
+                            ) and nc_to_update.status not in (
+                                NCStatus.CLOSED.value,
+                                NCStatus.CLOSED_EXCEPTION.value,
+                            ):
+                                nc_to_update.closed_time = datetime.now()
+                            elif sel_status not in (
+                                NCStatus.CLOSED.value,
+                                NCStatus.CLOSED_EXCEPTION.value,
+                            ):
+                                nc_to_update.closed_time = None
+
+                            if (
+                                sel_status == NCStatus.ESCALATED.value
+                                and nc_to_update.status != NCStatus.ESCALATED.value
+                            ):
+                                nc_to_update.escalation_time = datetime.now()
+                            elif sel_status != NCStatus.ESCALATED.value:
+                                nc_to_update.escalation_time = (
+                                    None  # Reset if de-escalated
+                                )
+
                             nc_to_update.status = sel_status
                             s.commit()
 
                             st.toast(f"NC #{nc.id} atualizada com sucesso!", icon="✅")
                             st.rerun()
 
-
 with tab_users:
     st.title("Gestão de Usuários")
 
     df_users = conn.query("SELECT * FROM user", ttl=0)
-
-    if not df_users.empty and "is_manager" in df_users.columns:
-        df_users["is_manager"] = df_users["is_manager"].astype(bool)
+    df_users["is_manager"] = df_users["is_manager"].astype(bool)
 
     st.data_editor(
         df_users,
         key="user_editor",
         num_rows="dynamic",
-        hide_index=True,
-        use_container_width=True,
+        width="stretch",
+        on_change=save_users,
+        column_order=("name", "email", "is_manager"),
         column_config={
             "name": st.column_config.TextColumn("Nome", required=True),
             "email": st.column_config.TextColumn("E-mail", required=True),
@@ -243,43 +314,61 @@ with tab_users:
         },
     )
 
-    if st.button("Salvar Usuários"):
-        changes = st.session_state.user_editor
 
-        try:
+with tab_severities:
+    st.title("Níveis de Gravidade / Prazos")
+    df_severities = conn.query("SELECT * FROM severity", ttl=0)
+
+    st.data_editor(
+        df_severities,
+        key="severity_editor",
+        num_rows="dynamic",
+        width="stretch",
+        on_change=save_severities,
+        column_order=("name", "days", "hours", "minutes"),
+        column_config={
+            "name": st.column_config.TextColumn("Nome", required=True),
+            "days": st.column_config.NumberColumn("Dias", min_value=0, default=0),
+            "hours": st.column_config.NumberColumn(
+                "Horas", min_value=0, max_value=23, default=0
+            ),
+            "minutes": st.column_config.NumberColumn(
+                "Minutos", min_value=0, max_value=59, default=0
+            ),
+        },
+    )
+
+
+with tab_config:
+    st.title("Configuração SMTP")
+    st.markdown("Defina os dados para envio automático de e-mails.")
+
+    with conn.session as s:
+        smtp_conf = s.get(SmtpConfig, 1)
+
+    with st.form("smtp_form"):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            server_input = st.text_input("Servidor SMTP", value=smtp_conf.server or "")
+        with col2:
+            port_input = st.number_input("Porta", value=smtp_conf.port or 587, step=1)
+
+        col3, col4 = st.columns(2)
+        with col3:
+            user_input = st.text_input("Usuário", value=smtp_conf.user or "")
+        with col4:
+            pass_input = st.text_input(
+                "Senha", value=smtp_conf.password or "", type="password"
+            )
+
+        if st.form_submit_button("Salvar Configurações SMTP"):
             with conn.session as s:
-                for added in changes["added_rows"]:
-                    new_user = User(
-                        name=added["name"],
-                        email=added["email"],
-                        is_manager=added.get("is_manager", False),
-                    )
-                    s.add(new_user)
-
-                for row_idx, edits in changes["edited_rows"].items():
-                    row_id = int(df_users.iloc[row_idx]["id"])
-                    user = s.get(User, row_id)
-
-                    if user:
-                        if "name" in edits:
-                            user.name = edits["name"]
-                        if "email" in edits:
-                            user.email = edits["email"]
-                        if "is_manager" in edits:
-                            user.is_manager = edits["is_manager"]
-
-                for row_idx in changes["deleted_rows"]:
-                    row_id = int(df_users.iloc[row_idx]["id"])
-                    user = s.get(User, row_id)
-                    if user:
-                        s.delete(user)
-
+                conf = s.get(SmtpConfig, 1)
+                conf.server = server_input
+                conf.port = port_input
+                conf.user = user_input
+                conf.password = pass_input
                 s.commit()
 
-            st.toast("Usuários salvos com sucesso!", icon="✅")
+            st.toast("Configurações SMTP salvas!", icon="✅")
             st.rerun()
-
-        except IntegrityError:
-            st.error(
-                "Erro ao salvar: O nome de usuário já existe. Os nomes devem ser únicos."
-            )
