@@ -1,0 +1,14 @@
+[project]
+name = "qaudit"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "edu292", email = "eduskoroboatei@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "pandas>=3.0.5",
+    "sqlalchemy>=2.0.53",
+    "streamlit>=1.63.0",
+]
