@@ -8,21 +8,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
-class ItemStatus(StrEnum):
-    PENDING = "Pendente"
-    NON_CONFORMANT = "Não Conforme"
-    CONFORMANT = "Conforme"
-    NA = "Não Avaliado"
-
-
-class NCStatus(StrEnum):
-    DRAFT = "Rascunho"
-    OPEN = "Aberta"
-    CLOSED = "Fechada"
-    ESCALATED = "Escalada"
-    CLOSED_EXCEPTION = "Fechada por Exceção"
-
-
 class Base(DeclarativeBase):
     pass
 
@@ -49,11 +34,17 @@ class SmtpConfig(Base):
 
 
 class ChecklistItem(Base):
+    class Status(StrEnum):
+        PENDING = "PENDING"
+        NON_CONFORMANT = "NON_CONFORMANT"
+        CONFORMANT = "CONFORMANT"
+        NA = "NA"
+
     __tablename__ = "checklist_items"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     question: Mapped[str] = mapped_column()
-    status: Mapped[str] = mapped_column(default=ItemStatus.PENDING.value)
+    status: Mapped[Status] = mapped_column(default=Status.PENDING.value)
 
     nc: Mapped[Nc | None] = relationship(
         back_populates="checklist_item", cascade="all, delete-orphan", uselist=False
@@ -61,6 +52,13 @@ class ChecklistItem(Base):
 
 
 class Nc(Base):
+    class Status(StrEnum):
+        DRAFT = "DRAFT"
+        OPEN = "OPEN"
+        CLOSED = "CLOSED"
+        ESCALATED = "ESCALATED"
+        CLOSED_EXCEPTION = "CLOSED_EXCEPTION"
+
     __tablename__ = "ncs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -81,11 +79,29 @@ class Nc(Base):
     deadline: Mapped[datetime | None] = mapped_column()
 
     details: Mapped[str | None] = mapped_column()
-    status: Mapped[str] = mapped_column(default=NCStatus.DRAFT.value)
+    status: Mapped[Status] = mapped_column(default=Status.DRAFT)
 
     checklist_item: Mapped[ChecklistItem] = relationship(back_populates="nc")
     responsible: Mapped[User | None] = relationship(back_populates="ncs")
     severity: Mapped[Severity | None] = relationship(back_populates="ncs")
+
+    TERMINAL_STATUSES = (Status.CLOSED, Status.CLOSED_EXCEPTION)
+    CLOSABLE_STATUSES = (Status.OPEN, Status.ESCALATED)
+
+    @property
+    def is_terminal(self):
+        return self.status in self.TERMINAL_STATUSES
+
+    @property
+    def is_closable(self):
+        return self.status in self.CLOSABLE_STATUSES
+
+    @property
+    def is_overdue(self):
+        if not self.deadline or self.is_terminal:
+            return False
+
+        return datetime.now() > self.deadline
 
 
 class Severity(Base):
