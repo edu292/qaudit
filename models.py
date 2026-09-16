@@ -77,7 +77,7 @@ class Nc(Base):
 
     opened_at: Mapped[datetime | None] = mapped_column()
     closed_at: Mapped[datetime | None] = mapped_column()
-    escalatied_at: Mapped[datetime | None] = mapped_column()
+    escalated_at: Mapped[datetime | None] = mapped_column()
     deadline: Mapped[datetime | None] = mapped_column()
 
     details: Mapped[str | None] = mapped_column()

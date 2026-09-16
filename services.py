@@ -1,8 +1,8 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import delete, exists, insert, select, update
 
-from emails import generate_nc_email, send_email
+from emails import generate_escalation_email, generate_nc_email, send_email
 from models import ChecklistItem, ItemStatus, Nc, NCStatus, Severity, SmtpConfig, User
 
 
@@ -38,11 +38,10 @@ def sync_checklist_ncs(session):
     session.execute(insert(Nc).from_select(["checklist_item_id"], select_missing))
 
 
-def open_nc(session, nc, details, user_id, sev_id):
+def open_nc(session, nc, details, user_id, sev_id, now):
     if not user_id or not sev_id:
         raise DomainError("Responsável e Gravidade são obrigatórios para abertura.")
 
-    now = datetime.now()
     sev = session.get(Severity, sev_id)
     user = session.get(User, user_id)
 
@@ -75,8 +74,7 @@ def save_draft(session, nc, details, user_id, sev_id):
     session.commit()
 
 
-def close_nc(session, nc, as_exception=False):
-    now = datetime.now()
+def close_nc(session, nc, now, as_exception=False):
     if as_exception:
         nc.status = NCStatus.CLOSED_EXCEPTION.value
     else:
@@ -86,17 +84,13 @@ def close_nc(session, nc, as_exception=False):
     session.commit()
 
 
-def escalate_nc(session, nc):
-    now = datetime.now()
-
+def escalate_nc(session, nc, now):
     nc.status = NCStatus.ESCALATED.value
     nc.escalated_at = now
     session.commit()
 
     config = session.get(SmtpConfig, 1)
-    manager_email = session.scalars(
-        select(User.email).where(User.is_manager.is_(True))
-    ).first()
+    manager = session.scalars(select(User).where(User.is_manager.is_(True))).first()
 
     subject, body = generate_escalation_email(
         nc.id,
@@ -105,6 +99,7 @@ def escalate_nc(session, nc):
         nc.details,
         nc.deadline,
         nc.responsible.name,
+        manager.name,
     )
 
-    send_email(config, subject, body, manager_email)
+    send_email(config, subject, body, manager.email)
