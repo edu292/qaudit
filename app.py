@@ -1,17 +1,27 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import streamlit as st
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from models import (
-    Checklist,
+    ChecklistItem,
     ItemStatus,
-    Ncs,
+    Nc,
     NCStatus,
     Severity,
     SmtpConfig,
     User,
     init_db,
+)
+from services import (
+    DomainError,
+    apply_editor_changes,
+    close_nc,
+    escalate_nc,
+    open_nc,
+    save_draft,
+    sync_checklist_ncs,
 )
 
 tab_main, tab_severities, tab_users, tab_config = st.tabs(
@@ -23,125 +33,60 @@ conn = st.connection("db", type="sql", url="sqlite:///audit.db")
 init_db(conn)
 
 
-def save_checklist():
-    changes = st.session_state.checklist_editor
-
-    with conn.session as s:
-        for added in changes["added_rows"]:
-            new_item = Checklist(
-                question=added["question"],
-                status=added["status"],
-            )
-            s.add(new_item)
-            s.flush()
-
-            if new_item.status == ItemStatus.NON_CONFORMANT:
-                s.add(Ncs(item_id=new_item.id))
-
-        for row_idx, edits in changes["edited_rows"].items():
-            row_id = int(df_check.iloc[row_idx]["id"])
-            item = s.get(Checklist, row_id)
-
-            if item:
-                if "question" in edits:
-                    item.question = edits["question"]
-
-                if "status" in edits:
-                    item.status = edits["status"]
-
-                    if item.status == ItemStatus.NON_CONFORMANT:
-                        exists = s.query(Ncs).filter_by(item_id=row_id).first()
-                        if not exists:
-                            s.add(Ncs(item_id=row_id))
-
-        for row_idx in changes["deleted_rows"]:
-            row_id = int(df_check.iloc[row_idx]["id"])
-            item = s.get(Checklist, row_id)
-            if item:
-                s.delete(item)
-
-        s.commit()
-
-    st.rerun()
-
-
-def save_users():
-    changes = st.session_state.user_editor
+def handle_editor_save(model, editor_key, df, success_msg, error_msg, post_sync=None):
+    changes = st.session_state[editor_key]
 
     try:
         with conn.session as s:
-            for added in changes["added_rows"]:
-                new_user = User(
-                    name=added["name"],
-                    email=added["email"],
-                    is_manager=added["is_manager"],
-                )
-                s.add(new_user)
-
-            for row_idx, edits in changes["edited_rows"].items():
-                row_id = int(df_users.iloc[row_idx]["id"])
-                user = s.get(User, row_id)
-
-                if user:
-                    if "name" in edits:
-                        user.name = edits["name"]
-                    if "email" in edits:
-                        user.email = edits["email"]
-                    if "is_manager" in edits:
-                        user.is_manager = edits["is_manager"]
-
-            for row_idx in changes["deleted_rows"]:
-                row_id = int(df_users.iloc[row_idx]["id"])
-                user = s.get(User, row_id)
-                if user:
-                    s.delete(user)
+            apply_editor_changes(s, model, changes, df)
+            if post_sync:
+                post_sync(s)
 
             s.commit()
 
-        st.toast("Usuários salvos com sucesso!", icon="✅")
+        st.toast(success_msg, icon="✅")
         st.rerun()
 
     except IntegrityError:
-        st.error(
-            "Erro ao salvar: O nome de usuário já existe. Os nomes devem ser únicos."
-        )
+        st.error(error_msg)
+
+
+def save_users():
+    handle_editor_save(
+        model=User,
+        editor_key="user_editor",
+        df=df_users,
+        success_msg="Usuários salvos com sucesso!",
+        error_msg="Erro ao salvar: O nome de usuário já existe.",
+    )
 
 
 def save_severities():
-    changes = st.session_state.severity_editor
-    try:
-        with conn.session as s:
-            for added in changes["added_rows"]:
-                s.add(
-                    Severity(
-                        name=added["name"],
-                        days=added["days"],
-                        hours=added["hours"],
-                        minutes=added["minutes"],
-                    )
-                )
-            for row_idx, edits in changes["edited_rows"].items():
-                row_id = int(df_severities.iloc[row_idx]["id"])
-                sev = s.get(Severity, row_id)
-                if sev:
-                    for k, v in edits.items():
-                        setattr(sev, k, v)
-            for row_idx in changes["deleted_rows"]:
-                row_id = int(df_severities.iloc[row_idx]["id"])
-                sev = s.get(Severity, row_id)
-                if sev:
-                    s.delete(sev)
-            s.commit()
-        st.toast("Gravidades salvas com sucesso!", icon="✅")
-    except IntegrityError:
-        st.error("O nome da gravidade deve ser único.")
+    handle_editor_save(
+        model=Severity,
+        editor_key="severity_editor",
+        df=df_severities,
+        success_msg="Categorias salvas com sucesso!",
+        error_msg="O nome da categoria deve ser único.",
+    )
+
+
+def save_checklist():
+    handle_editor_save(
+        model=ChecklistItem,
+        editor_key="checklist_editor",
+        df=df_check,
+        success_msg="Checklist salvo com sucesso!",
+        error_msg="Erro ao salvar o checklist.",
+        post_sync=sync_checklist_ncs,
+    )
 
 
 with tab_main:
     st.title("Checklist e Auditoria")
 
-    df_users = conn.query("SELECT * FROM user", ttl=0)
-    df_check = conn.query("SELECT * FROM checklist", ttl=0)
+    df_users = conn.query("SELECT * FROM users", ttl=0)
+    df_check = conn.query("SELECT * FROM checklist_items", ttl=0)
 
     valid_items = df_check[df_check["status"] != ItemStatus.PENDING]
     conformant_items = valid_items[valid_items["status"] == ItemStatus.CONFORMANT]
@@ -173,131 +118,164 @@ with tab_main:
 
     st.subheader("Gestão de Não Conformidades (NCs)")
 
+    now = datetime.now()
+
     with conn.session as s:
-        ncs = s.query(Ncs).all()
+        ncs = (
+            s.query(Nc)
+            .options(
+                joinedload(Nc.checklist_item),
+                joinedload(Nc.responsible),
+                joinedload(Nc.severity),
+            )
+            .all()
+        )
         users = s.query(User).all()
         severities = s.query(Severity).all()
 
-        user_map = {u.name: u.id for u in users}
-        sev_map = {sev.name: sev for sev in severities}
-
-        user_names = ["Selecione..."] + list(user_map.keys())
-        sev_names = ["Selecione..."] + list(sev_map.keys())
+        user_opts = {u.id: u.name for u in users}
+        sev_opts = {
+            sv.id: f"{sv.name} ({sv.days}d {sv.hours}h {sv.minutes}m)"
+            for sv in severities
+        }
 
         if not ncs:
             st.info("Nenhuma Não Conformidade registrada.")
-        else:
-            for nc in ncs:
-                checklist_item = s.get(Checklist, nc.item_id)
-                is_draft = nc.status == NCStatus.DRAFT.value
-                expander_title = f"NC #{nc.id} | Item {nc.item_id}: {checklist_item.question} [{nc.status}]"
 
-                with st.expander(expander_title, expanded=is_draft):
-                    with st.form(key=f"form_nc_{nc.id}"):
-                        details = st.text_area(
-                            "Detalhes da Ocorrência", value=nc.details or "", height=120
-                        )
+        for nc in ncs:
+            is_draft = nc.status == NCStatus.DRAFT.value
+            is_open = nc.status == NCStatus.OPEN.value
+            is_escalated = nc.status == NCStatus.ESCALATED.value
+            is_terminal = nc.status in (
+                NCStatus.CLOSED.value,
+                NCStatus.CLOSED_EXCEPTION.value,
+            )
 
-                        col1, col2, col3 = st.columns(3)
+            expander_title = (
+                f"NC #{nc.id} | Item: {nc.checklist_item.question} [{nc.status}]"
+            )
 
-                        with col1:
-                            curr_user = next(
-                                (u.name for u in users if u.id == nc.responsible_id),
-                                "Selecione...",
+            with st.expander(expander_title, expanded=is_draft):
+                details = st.text_area(
+                    "Detalhamento",
+                    value=nc.details or "",
+                    height=100,
+                    disabled=is_terminal,
+                    key=f"details_{nc.id}",
+                )
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    sel_user_id = st.selectbox(
+                        "Responsável",
+                        placeholder="Selecione...",
+                        format_func=lambda uid: user_opts[uid],
+                        options=list(user_opts.keys()),
+                        index=None
+                        if not nc.responsible_id
+                        else list(user_opts.keys()).index(nc.responsible_id),
+                        disabled=not is_draft,
+                        key=f"user_{nc.id}",
+                    )
+                with col2:
+                    sel_sev_id = st.selectbox(
+                        "Categoria",
+                        placeholder="Selecione...",
+                        options=list(sev_opts.keys()),
+                        format_func=lambda sid: sev_opts[sid],
+                        index=None
+                        if not nc.severity_id
+                        else list(sev_opts.keys()).index(nc.severity_id),
+                        disabled=not is_draft,
+                        key=f"sev_{nc.id}",
+                    )
+
+                if nc.deadline:
+                    is_overdue = now > nc.deadline and is_open
+                    color = "red" if is_overdue else "gray"
+                    st.markdown(
+                        f":{color}[**Prazo:** {nc.deadline.strftime('%d/%m/%Y %H:%M')}]"
+                    )
+
+                st.markdown(
+                    "<hr style='margin: 0.5rem 0 1rem 0;'>", unsafe_allow_html=True
+                )
+                act_col1, act_col2, _ = st.columns([0.20, 0.16, 0.64], gap="small")
+
+                try:
+                    if is_draft:
+                        if act_col1.button("Salvar Rascunho", key=f"draft_{nc.id}"):
+                            save_draft(s, nc, details, sel_user_id, sel_sev_id)
+                            st.toast("Rascunho atualizado.")
+
+                        if act_col2.button(
+                            "Abrir NC", type="primary", key=f"open_{nc.id}"
+                        ):
+                            open_nc(s, nc, details, sel_user_id, sel_sev_id)
+                            st.toast(
+                                "NC Aberta! Notificação enviada ao responsável.",
+                                icon="🚀",
                             )
-                            sel_user = st.selectbox(
-                                "Responsável",
-                                options=user_names,
-                                index=user_names.index(curr_user),
-                            )
-
-                        with col2:
-                            curr_sev = next(
-                                (
-                                    sv.name
-                                    for sv in severities
-                                    if sv.id == nc.severity_id
-                                ),
-                                "Selecione...",
-                            )
-                            sel_sev = st.selectbox(
-                                "Gravidade (Calcula Prazo)",
-                                options=sev_names,
-                                index=sev_names.index(curr_sev),
-                            )
-
-                        with col3:
-                            status_options = [e.value for e in NCStatus]
-                            sel_status = st.selectbox(
-                                "Status",
-                                options=status_options,
-                                index=status_options.index(nc.status),
-                            )
-
-                        if nc.deadline:
-                            st.caption(
-                                f"**Prazo Calculado:** {nc.deadline.strftime('%d/%m/%Y %H:%M')} (Abertura: {nc.timestamp.strftime('%d/%m/%Y %H:%M')})"
-                            )
-
-                        if st.form_submit_button("Salvar NC"):
-                            nc_to_update = s.get(Ncs, nc.id)
-                            nc_to_update.details = details
-                            nc_to_update.responsible_id = (
-                                user_map.get(sel_user)
-                                if sel_user != "Selecione..."
-                                else None
-                            )
-
-                            # Deadline Calculation
-                            if sel_sev != "Selecione...":
-                                chosen_sev = sev_map[sel_sev]
-                                nc_to_update.severity_id = chosen_sev.id
-                                nc_to_update.deadline = (
-                                    nc_to_update.timestamp
-                                    + timedelta(
-                                        days=chosen_sev.days,
-                                        hours=chosen_sev.hours,
-                                        minutes=chosen_sev.minutes,
-                                    )
-                                )
-                            else:
-                                nc_to_update.severity_id = None
-                                nc_to_update.deadline = None
-
-                            if sel_status in (
-                                NCStatus.CLOSED.value,
-                                NCStatus.CLOSED_EXCEPTION.value,
-                            ) and nc_to_update.status not in (
-                                NCStatus.CLOSED.value,
-                                NCStatus.CLOSED_EXCEPTION.value,
-                            ):
-                                nc_to_update.closed_time = datetime.now()
-                            elif sel_status not in (
-                                NCStatus.CLOSED.value,
-                                NCStatus.CLOSED_EXCEPTION.value,
-                            ):
-                                nc_to_update.closed_time = None
-
-                            if (
-                                sel_status == NCStatus.ESCALATED.value
-                                and nc_to_update.status != NCStatus.ESCALATED.value
-                            ):
-                                nc_to_update.escalation_time = datetime.now()
-                            elif sel_status != NCStatus.ESCALATED.value:
-                                nc_to_update.escalation_time = (
-                                    None  # Reset if de-escalated
-                                )
-
-                            nc_to_update.status = sel_status
-                            s.commit()
-
-                            st.toast(f"NC #{nc.id} atualizada com sucesso!", icon="✅")
                             st.rerun()
+
+                    elif is_open:
+                        if act_col1.button(
+                            "✅ Concluir", key=f"close_{nc.id}", width="stretch"
+                        ):
+                            close_nc(s, nc, as_exception=False)
+                            st.toast("NC finalizada com sucesso.", icon="✅")
+                            st.rerun()
+
+                        can_escalate = nc.deadline and now > nc.deadline
+                        help_text = (
+                            None
+                            if can_escalate
+                            else "Escalação disponível apenas após o vencimento do prazo."
+                        )
+                        if act_col2.button(
+                            "⚠️ Escalar",
+                            key=f"escalate_{nc.id}",
+                            width="stretch",
+                            disabled=not can_escalate,
+                            help=help_text,
+                        ):
+                            escalate_nc(s, nc)
+                            st.toast("NC escalada ao gestor.", icon="⚠️")
+                            st.rerun()
+
+                    elif is_escalated:
+                        if act_col1.button(
+                            "Fechamento p/ Exceção",
+                            type="primary",
+                            key=f"exception_{nc.id}",
+                            width="stretch",
+                        ):
+                            close_nc(s, nc, as_exception=True)
+                            st.toast("NC encerrada com exceção.", icon="⚠️")
+                            st.rerun()
+
+                    elif is_terminal:
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.caption("Aberta em")
+                            st.text(nc.opened_at.strftime("%d/%m/%Y %H:%M"))
+                        with col2:
+                            st.caption("Prazo Original")
+                            st.text(nc.deadline.strftime("%d/%m/%Y %H:%M"))
+                        with col3:
+                            st.caption("Finalizada em")
+                            st.text(nc.closed_at.strftime("%d/%m/%Y %H:%M"))
+                        with col4:
+                            st.caption("Escalada em")
+                            st.text(nc.escatated_at.strftime("%d/%m/%Y %H:%M"))
+
+                except DomainError as err:
+                    st.error(str(err))
 
 with tab_users:
     st.title("Gestão de Usuários")
 
-    df_users = conn.query("SELECT * FROM user", ttl=0)
+    df_users = conn.query("SELECT * FROM users", ttl=0)
     df_users["is_manager"] = df_users["is_manager"].astype(bool)
 
     st.data_editor(
@@ -316,8 +294,8 @@ with tab_users:
 
 
 with tab_severities:
-    st.title("Níveis de Gravidade / Prazos")
-    df_severities = conn.query("SELECT * FROM severity", ttl=0)
+    st.title("Categorias de Não Conformidade")
+    df_severities = conn.query("SELECT * FROM severities", ttl=0)
 
     st.data_editor(
         df_severities,
