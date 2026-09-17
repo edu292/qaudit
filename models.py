@@ -40,6 +40,16 @@ class ChecklistItem(Base):
         CONFORMANT = "CONFORMANT"
         NA = "NA"
 
+        @property
+        def label(self) -> str:
+            labels = {
+                self.PENDING: "Pendente",
+                self.CONFORMANT: "Conforme",
+                self.NON_CONFORMANT: "Não Conforme",
+                self.NA: "Não Aplicável",
+            }
+            return labels[self]
+
     __tablename__ = "checklist_items"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -58,6 +68,17 @@ class Nc(Base):
         CLOSED = "CLOSED"
         ESCALATED = "ESCALATED"
         CLOSED_EXCEPTION = "CLOSED_EXCEPTION"
+
+        @property
+        def label(self) -> str:
+            labels = {
+                self.DRAFT: "Rascunho",
+                self.OPEN: "Aberta",
+                self.CLOSED: "Encerrada",
+                self.ESCALATED: "Escalada",
+                self.CLOSED_EXCEPTION: "Fechada por Exceção",
+            }
+            return labels[self]
 
     __tablename__ = "ncs"
 

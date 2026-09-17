@@ -12,7 +12,7 @@ def generate_nc_email(
 
     body = f"""Olá {user_name},
 
-Uma Não Conformidade de Qualidade (QA) foi atribuída a você e requer ação corretiva.
+Uma Não Conformidade de Qualidade (QA) foi encontrada em um item sob a sua responsabilidade e requer ação corretiva.
 
 RESUMO DA OCORRÊNCIA
 --------------------
@@ -34,7 +34,7 @@ Equipe de QA"""
 def generate_escalation_email(
     nc_id, question, severity_name, details, deadline, user_name, manager_name
 ):
-    subject = f"[ESCALONAMENTO] NC #{nc_id}: {question[:40]}..."
+    subject = f"[PEDIDO ESCALONAMENTO] NC #{nc_id}: {question[:45]}..."
 
     body = f"""Olá {manager_name},
 
@@ -45,7 +45,7 @@ DADOS DA NC
 • ID: #{nc_id}
 • Item: {question}
 • Severidade: {severity_name}
-• Responsável Atual: {user_name}
+• Responsável: {user_name}
 • Prazo original: {deadline.strftime("%d/%m/%Y %H:%M")}
 
 DETALHES DA NÃO CONFORMIDADE
@@ -80,6 +80,7 @@ def _send_email(config, subject, body, to_email):
 
 def send_email(session, subject, body, to_email):
     config = session.get(SmtpConfig, 1)
+    session.expunge(config)
     threading.Thread(
         target=_send_email, args=(config, subject, body, to_email), daemon=True
     ).start()

@@ -82,12 +82,7 @@ def render_main_tab():
                 "Status",
                 options=tuple(ChecklistItem.Status),
                 default=ChecklistItem.Status.PENDING.value,
-                format_func=lambda s: {
-                    ChecklistItem.Status.PENDING: "Pendente",
-                    ChecklistItem.Status.CONFORMANT: "Conforme",
-                    ChecklistItem.Status.NON_CONFORMANT: "Não Conforme",
-                    ChecklistItem.Status.NA: "Não Aplicável",
-                }[s],
+                format_func=lambda s: s.label,
                 required=True,
             ),
         },
@@ -130,7 +125,7 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
     is_draft = nc.status == Nc.Status.DRAFT.value
     is_overdue = nc.is_overdue
     with st.expander(
-        f"NC #{nc.id} | Item: {nc.checklist_item.question} [{nc.status}]",
+        f"NC #{nc.id} | Item: {nc.checklist_item.question} [{nc.status.label}]",
         expanded=is_draft,
     ):
         details = st.text_area(
@@ -174,7 +169,7 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
             )
 
         st.markdown("<hr style='margin: 0.5rem 0 1rem 0;'>", unsafe_allow_html=True)
-        act_col1, act_col2, _ = st.columns([0.30, 0.15, 0.55], gap="small")
+        act_col1, act_col2, _ = st.columns([0.30, 0.30, 0.40], gap="small")
 
         def run_action(action_fn, *args, **kwargs):
             nonlocal nc
