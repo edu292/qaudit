@@ -2,6 +2,8 @@ import smtplib
 import threading
 from email.message import EmailMessage
 
+from models import SmtpConfig
+
 
 def generate_nc_email(
     nc_id, question, status, details, deadline, user_name, severity_name
@@ -10,7 +12,7 @@ def generate_nc_email(
 
     body = f"""Olá {user_name},
 
-Uma Não Conformidade de Qualidade (QA) foi atribuída a você e requer ação corretiva.
+Uma Não Conformidade de Qualidade (QA) foi encontrada em um item sob a sua responsabilidade e requer ação corretiva.
 
 RESUMO DA OCORRÊNCIA
 --------------------
@@ -32,19 +34,19 @@ Equipe de QA"""
 def generate_escalation_email(
     nc_id, question, severity_name, details, deadline, user_name, manager_name
 ):
-    subject = f"[URGENTE - ESCALONAMENTO] NC #{nc_id} Vencida: {question[:40]}..."
+    subject = f"[PEDIDO ESCALONAMENTO] NC #{nc_id}: {question[:45]}..."
 
     body = f"""Olá {manager_name},
 
-A Não Conformidade #{nc_id} ultrapassou o prazo de resolução sem conclusão e foi escalada.
+A Não Conformidade #{nc_id} não foi resolvida no prazo estipulado e foi escalada.
 
 DADOS DA NC
 -----------
 • ID: #{nc_id}
 • Item: {question}
 • Severidade: {severity_name}
-• Responsável Atual: {user_name}
-• Prazo Vencido em: {deadline.strftime("%d/%m/%Y %H:%M")}
+• Responsável: {user_name}
+• Prazo original: {deadline.strftime("%d/%m/%Y %H:%M")}
 
 DETALHES DA NÃO CONFORMIDADE
 ----------------------------
@@ -76,7 +78,9 @@ def _send_email(config, subject, body, to_email):
         print(f"Failed to send email to {to_email}: {e}")
 
 
-def send_email(config, subject, body, to_email):
+def send_email(session, subject, body, to_email):
+    config = session.get(SmtpConfig, 1)
+    session.expunge(config)
     threading.Thread(
         target=_send_email, args=(config, subject, body, to_email), daemon=True
     ).start()

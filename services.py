@@ -1,9 +1,8 @@
-from datetime import timedelta
-
 from sqlalchemy import delete, exists, insert, select, update
 
 from emails import generate_escalation_email, generate_nc_email, send_email
-from models import ChecklistItem, ItemStatus, Nc, NCStatus, Severity, SmtpConfig, User
+from models import ChecklistItem, Nc, Severity, User
+from utils import get_delta_in_business_hours
 
 
 class DomainError(Exception):
@@ -31,7 +30,7 @@ def sync_checklist_ncs(session):
 
     select_missing = (
         select(ChecklistItem.id.label("checklist_item_id"))
-        .where(ChecklistItem.status == ItemStatus.NON_CONFORMANT)
+        .where(ChecklistItem.status == ChecklistItem.Status.NON_CONFORMANT)
         .where(~has_nc)
     )
 
@@ -40,25 +39,30 @@ def sync_checklist_ncs(session):
     stale_drafts = (
         select(Nc.id)
         .join(ChecklistItem, Nc.checklist_item_id == ChecklistItem.id)
-        .where(Nc.status == NCStatus.DRAFT.value)
-        .where(ChecklistItem.status != ItemStatus.NON_CONFORMANT)
+        .where(Nc.status == Nc.Status.DRAFT.value)
+        .where(ChecklistItem.status != ChecklistItem.Status.NON_CONFORMANT)
     )
     session.execute(delete(Nc).where(Nc.id.in_(stale_drafts)))
 
 
 def open_nc(session, nc, details, user_id, sev_id, now):
+    if nc.status != Nc.Status.DRAFT.value:
+        raise DomainError("Apenas rascunhos podem ser abertos.")
+
     if not user_id or not sev_id:
         raise DomainError("Responsável e Gravidade são obrigatórios para abertura.")
 
     sev = session.get(Severity, sev_id)
     user = session.get(User, user_id)
+    if not sev or not user:
+        raise DomainError("Responsável ou Gravidade inválidos.")
 
     nc.details = details
     nc.responsible_id = user_id
     nc.severity_id = sev_id
     nc.opened_at = now
-    nc.deadline = now + timedelta(days=sev.days, hours=sev.hours, minutes=sev.minutes)
-    nc.status = NCStatus.OPEN.value
+    nc.deadline = get_delta_in_business_hours(now, sev.days, sev.hours, sev.minutes)
+    nc.status = Nc.Status.OPEN.value
     session.commit()
 
     subject, body = generate_nc_email(
@@ -71,8 +75,7 @@ def open_nc(session, nc, details, user_id, sev_id, now):
         sev.name,
     )
 
-    config = session.get(SmtpConfig, 1)
-    send_email(config, subject, body, user.email)
+    send_email(session, subject, body, user.email)
 
 
 def save_draft(session, nc, details, user_id, sev_id):
@@ -84,21 +87,27 @@ def save_draft(session, nc, details, user_id, sev_id):
 
 def close_nc(session, nc, now, as_exception=False):
     if as_exception:
-        nc.status = NCStatus.CLOSED_EXCEPTION.value
+        nc.status = Nc.Status.CLOSED_EXCEPTION.value
     else:
-        nc.status = NCStatus.CLOSED.value
+        nc.status = Nc.Status.CLOSED.value
 
     nc.closed_at = now
     session.commit()
 
 
 def escalate_nc(session, nc, now):
-    nc.status = NCStatus.ESCALATED.value
+    if nc.status != Nc.Status.OPEN.value:
+        raise DomainError("Apenas NCs abertas podem ser escaladas.")
+    if not nc.deadline or now <= nc.deadline:
+        raise DomainError("Prazo ainda vigente.")
+
+    nc.status = Nc.Status.ESCALATED.value
     nc.escalated_at = now
     session.commit()
 
-    config = session.get(SmtpConfig, 1)
     manager = session.scalars(select(User).where(User.is_manager.is_(True))).first()
+    if not manager:
+        raise DomainError("Nenhum gestor configurado para escalonamento.")
 
     subject, body = generate_escalation_email(
         nc.id,
@@ -110,4 +119,4 @@ def escalate_nc(session, nc, now):
         manager.name,
     )
 
-    send_email(config, subject, body, manager.email)
+    send_email(session, subject, body, manager.email)
