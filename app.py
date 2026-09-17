@@ -53,7 +53,9 @@ def render_main_tab():
 
     df_check = conn.query("SELECT * FROM checklist_items", ttl=0)
 
-    valid_items = df_check[df_check["status"] != ItemStatus.PENDING]
+    valid_items = df_check[
+        ~df_check["status"].isin([ItemStatus.PENDING, ItemStatus.NA])
+    ]
     conformant_items = valid_items[valid_items["status"] == ItemStatus.CONFORMANT]
     adherence = (
         (len(conformant_items) / len(valid_items) * 100) if not valid_items.empty else 0

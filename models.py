@@ -4,6 +4,7 @@ from enum import StrEnum
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
+    event,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -12,7 +13,7 @@ class ItemStatus(StrEnum):
     PENDING = "Pendente"
     NON_CONFORMANT = "Não Conforme"
     CONFORMANT = "Conforme"
-    NA = "Não Avaliado"
+    NA = "Não Aplicável"
 
 
 class NCStatus(StrEnum):
@@ -101,6 +102,12 @@ class Severity(Base):
 
 
 def init_db(conn):
+    @event.listens_for(conn.engine, "connect")
+    def _enable_sqlite_fk(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(conn.engine)
     with conn.session as s:
         if not s.get(SmtpConfig, 1):

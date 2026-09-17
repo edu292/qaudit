@@ -37,6 +37,14 @@ def sync_checklist_ncs(session):
 
     session.execute(insert(Nc).from_select(["checklist_item_id"], select_missing))
 
+    stale_drafts = (
+        select(Nc.id)
+        .join(ChecklistItem, Nc.checklist_item_id == ChecklistItem.id)
+        .where(Nc.status == NCStatus.DRAFT.value)
+        .where(ChecklistItem.status != ItemStatus.NON_CONFORMANT)
+    )
+    session.execute(delete(Nc).where(Nc.id.in_(stale_drafts)))
+
 
 def open_nc(session, nc, details, user_id, sev_id, now):
     if not user_id or not sev_id:
