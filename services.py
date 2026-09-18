@@ -1,21 +1,33 @@
 from sqlalchemy import delete, exists, insert, select, update
 
 from emails import generate_escalation_email, generate_nc_email, send_email
-from models import ChecklistItem, Nc, Severity, User
-from utils import get_delta_in_business_hours
+from models import ChecklistItem, Nc, Severity, SmtpConfig, User
+from utils import format_severity_duration, get_delta_in_business_hours
+
+
+def _get_manager(session):
+    return session.scalars(select(User).where(User.is_manager.is_(True))).first()
+
+
+def _get_project_name(session):
+    config = session.get(SmtpConfig, 1)
+    return config.project_name if config else None
 
 
 class DomainError(Exception):
     """Raised when a business constraint is violated."""
 
 
-def apply_editor_changes(session, model, changes: dict, df_source):
+def apply_editor_changes(session, model, changes: dict, df_source, readonly_columns=()):
+    def strip_readonly(row: dict) -> dict:
+        return {k: v for k, v in row.items() if k not in readonly_columns}
+
     if added := changes.get("added_rows"):
-        session.execute(insert(model), added)
+        session.execute(insert(model), [strip_readonly(row) for row in added])
 
     if edited := changes.get("edited_rows"):
         updates = [
-            {"id": int(df_source.iloc[idx]["id"]), **vals}
+            {"id": int(df_source.iloc[idx]["id"]), **strip_readonly(vals)}
             for idx, vals in edited.items()
         ]
         session.execute(update(model), updates)
@@ -45,7 +57,7 @@ def sync_checklist_ncs(session):
     session.execute(delete(Nc).where(Nc.id.in_(stale_drafts)))
 
 
-def open_nc(session, nc, details, user_id, sev_id, now):
+def open_nc(session, nc, details, corrective_action, user_id, sev_id, now):
     if nc.status != Nc.Status.DRAFT.value:
         raise DomainError("Apenas rascunhos podem ser abertos.")
 
@@ -58,6 +70,7 @@ def open_nc(session, nc, details, user_id, sev_id, now):
         raise DomainError("Responsável ou Gravidade inválidos.")
 
     nc.details = details
+    nc.corrective_action = corrective_action
     nc.responsible_id = user_id
     nc.severity_id = sev_id
     nc.opened_at = now
@@ -65,21 +78,28 @@ def open_nc(session, nc, details, user_id, sev_id, now):
     nc.status = Nc.Status.OPEN.value
     session.commit()
 
-    subject, body = generate_nc_email(
+    manager = _get_manager(session)
+    classification = f"{sev.name} | {format_severity_duration(sev.days, sev.hours, sev.minutes)}"
+
+    subject, text_body, html_body = generate_nc_email(
         nc.id,
         nc.checklist_item.question,
-        nc.status,
         nc.details,
+        nc.corrective_action,
+        nc.opened_at,
         nc.deadline,
         user.name,
-        sev.name,
+        classification,
+        _get_project_name(session),
+        manager.name if manager else None,
     )
 
-    send_email(session, subject, body, user.email)
+    send_email(session, subject, text_body, html_body, user.email)
 
 
-def save_draft(session, nc, details, user_id, sev_id):
+def save_draft(session, nc, details, corrective_action, user_id, sev_id):
     nc.details = details
+    nc.corrective_action = corrective_action
     nc.responsible_id = user_id
     nc.severity_id = sev_id
     session.commit()
@@ -88,8 +108,10 @@ def save_draft(session, nc, details, user_id, sev_id):
 def close_nc(session, nc, now, as_exception=False):
     if as_exception:
         nc.status = Nc.Status.CLOSED_EXCEPTION.value
+        nc.checklist_item.workflow_status = ChecklistItem.WorkflowStatus.CLOSED_EXCEPTION.value
     else:
         nc.status = Nc.Status.CLOSED.value
+        nc.checklist_item.workflow_status = ChecklistItem.WorkflowStatus.CLOSED.value
 
     nc.closed_at = now
     session.commit()
@@ -105,18 +127,25 @@ def escalate_nc(session, nc, now):
     nc.escalated_at = now
     session.commit()
 
-    manager = session.scalars(select(User).where(User.is_manager.is_(True))).first()
+    manager = _get_manager(session)
     if not manager:
         raise DomainError("Nenhum gestor configurado para escalonamento.")
 
-    subject, body = generate_escalation_email(
+    sev = nc.severity
+    classification = f"{sev.name} | {format_severity_duration(sev.days, sev.hours, sev.minutes)}"
+
+    subject, text_body, html_body = generate_escalation_email(
         nc.id,
         nc.checklist_item.question,
-        nc.severity.name,
+        classification,
         nc.details,
+        nc.corrective_action,
+        nc.opened_at,
         nc.deadline,
+        nc.escalated_at,
         nc.responsible.name,
         manager.name,
+        _get_project_name(session),
     )
 
-    send_email(session, subject, body, manager.email)
+    send_email(session, subject, text_body, html_body, manager.email)

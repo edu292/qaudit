@@ -32,6 +32,7 @@ class SmtpConfig(Base):
     port: Mapped[int | None] = mapped_column()
     user: Mapped[str | None] = mapped_column()
     password: Mapped[str | None] = mapped_column()
+    project_name: Mapped[str | None] = mapped_column()
 
 
 class ChecklistItem(Base):
@@ -51,11 +52,28 @@ class ChecklistItem(Base):
             }
             return labels[self]
 
+    class WorkflowStatus(StrEnum):
+        OPEN = "OPEN"
+        CLOSED = "CLOSED"
+        CLOSED_EXCEPTION = "CLOSED_EXCEPTION"
+
+        @property
+        def label(self) -> str:
+            labels = {
+                self.OPEN: "Aberta",
+                self.CLOSED: "Fechada",
+                self.CLOSED_EXCEPTION: "Fechada por Exceção",
+            }
+            return labels[self]
+
     __tablename__ = "checklist_items"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     question: Mapped[str] = mapped_column()
     status: Mapped[Status] = mapped_column(default=Status.PENDING.value)
+    workflow_status: Mapped[WorkflowStatus] = mapped_column(
+        default=WorkflowStatus.OPEN.value
+    )
 
     nc: Mapped[Nc | None] = relationship(
         back_populates="checklist_item", cascade="all, delete-orphan", uselist=False
@@ -101,6 +119,7 @@ class Nc(Base):
     deadline: Mapped[datetime | None] = mapped_column()
 
     details: Mapped[str | None] = mapped_column()
+    corrective_action: Mapped[str | None] = mapped_column()
     status: Mapped[Status] = mapped_column(default=Status.DRAFT)
 
     checklist_item: Mapped[ChecklistItem] = relationship(back_populates="nc")
@@ -138,6 +157,17 @@ class Severity(Base):
     ncs: Mapped[list[Nc]] = relationship(back_populates="severity")
 
 
+def _add_missing_columns(engine, table_name, column_defs):
+    with engine.connect() as c:
+        existing = {row[1] for row in c.exec_driver_sql(f"PRAGMA table_info({table_name})")}
+        for col_name, col_type in column_defs.items():
+            if col_name not in existing:
+                c.exec_driver_sql(
+                    f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+                )
+        c.commit()
+
+
 def init_db(conn):
     @event.listens_for(conn.engine, "connect")
     def _enable_sqlite_fk(dbapi_connection, connection_record):
@@ -146,6 +176,27 @@ def init_db(conn):
         cursor.close()
 
     Base.metadata.create_all(conn.engine)
+    _add_missing_columns(conn.engine, "ncs", {"corrective_action": "TEXT"})
+    _add_missing_columns(conn.engine, "smtp_config", {"project_name": "TEXT"})
+    _add_missing_columns(
+        conn.engine,
+        "checklist_items",
+        {"workflow_status": "TEXT NOT NULL DEFAULT 'OPEN'"},
+    )
+    with conn.engine.connect() as c:
+        c.exec_driver_sql(
+            """
+            UPDATE checklist_items
+            SET workflow_status = (
+                SELECT ncs.status FROM ncs WHERE ncs.checklist_item_id = checklist_items.id
+            )
+            WHERE id IN (
+                SELECT checklist_item_id FROM ncs WHERE status IN ('CLOSED', 'CLOSED_EXCEPTION')
+            )
+            """
+        )
+        c.commit()
+
     with conn.session as s:
         if not s.get(SmtpConfig, 1):
             s.add(SmtpConfig(id=1, port=587))

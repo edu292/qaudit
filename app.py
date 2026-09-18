@@ -28,12 +28,14 @@ conn = st.connection("db", type="sql", url="sqlite:///db.sqlite3")
 init_db(conn)
 
 
-def handle_editor_save(model, editor_key, df, success_msg, error_msg, post_sync=None):
+def handle_editor_save(
+    model, editor_key, df, success_msg, error_msg, post_sync=None, readonly_columns=()
+):
     changes = st.session_state[editor_key]
 
     try:
         with conn.session as s:
-            apply_editor_changes(s, model, changes, df)
+            apply_editor_changes(s, model, changes, df, readonly_columns=readonly_columns)
             if post_sync:
                 post_sync(s)
 
@@ -79,13 +81,21 @@ def render_main_tab():
             "error_msg": "Erro ao salvar o checklist.",
             "post_sync": sync_checklist_ncs,
         },
+        column_order=("id", "question", "status", "workflow_status"),
         column_config={
             "id": st.column_config.NumberColumn("ID", disabled=True),
             "question": st.column_config.TextColumn("Pergunta", required=True),
             "status": st.column_config.SelectboxColumn(
-                "Status",
+                "Situação",
                 options=tuple(ChecklistItem.Status),
                 default=ChecklistItem.Status.PENDING.value,
+                format_func=lambda s: s.label,
+                required=True,
+            ),
+            "workflow_status": st.column_config.SelectboxColumn(
+                "Status",
+                options=tuple(ChecklistItem.WorkflowStatus),
+                default=ChecklistItem.WorkflowStatus.OPEN.value,
                 format_func=lambda s: s.label,
                 required=True,
             ),
@@ -140,6 +150,14 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
             key=f"details_{nc.id}",
         )
 
+        corrective_action = st.text_area(
+            "Ação Corretiva Indicada",
+            value=nc.corrective_action or "",
+            height=80,
+            disabled=not is_draft,
+            key=f"corrective_action_{nc.id}",
+        )
+
         col1, col2 = st.columns(2)
         with col1:
             sel_user_id = st.selectbox(
@@ -190,13 +208,22 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
                 if act_col1.button(
                     "Salvar Rascunho", key=f"draft_{nc.id}", width="stretch"
                 ):
-                    run_action(save_draft, details, sel_user_id, sel_sev_id)
+                    run_action(
+                        save_draft, details, corrective_action, sel_user_id, sel_sev_id
+                    )
                     st.toast("Rascunho atualizado.")
 
                 if act_col2.button(
                     "Abrir NC", type="primary", key=f"open_{nc.id}", width="stretch"
                 ):
-                    run_action(open_nc, details, sel_user_id, sel_sev_id, now)
+                    run_action(
+                        open_nc,
+                        details,
+                        corrective_action,
+                        sel_user_id,
+                        sel_sev_id,
+                        now,
+                    )
                     st.toast(
                         "NC Aberta! Notificação enviada ao responsável.",
                         icon="🚀",
@@ -330,6 +357,12 @@ def render_config_tab():
         assert smtp_conf is not None
 
         with st.form("smtp_form"):
+            project_name_input = st.text_input(
+                "Nome do Projeto",
+                value=smtp_conf.project_name or "",
+                help="Exibido no campo 'Projeto' dos e-mails de Não Conformidade.",
+            )
+
             col1, col2 = st.columns([3, 1])
             with col1:
                 server_input = st.text_input(
@@ -349,6 +382,7 @@ def render_config_tab():
                 )
 
             if st.form_submit_button("Salvar Configurações SMTP"):
+                smtp_conf.project_name = project_name_input
                 smtp_conf.server = server_input
                 smtp_conf.port = port_input
                 smtp_conf.user = user_input
