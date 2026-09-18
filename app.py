@@ -28,14 +28,12 @@ conn = st.connection("db", type="sql", url="sqlite:///db.sqlite3")
 init_db(conn)
 
 
-def handle_editor_save(
-    model, editor_key, df, success_msg, error_msg, post_sync=None, readonly_columns=()
-):
+def handle_editor_save(model, editor_key, df, success_msg, error_msg, post_sync=None):
     changes = st.session_state[editor_key]
 
     try:
         with conn.session as s:
-            apply_editor_changes(s, model, changes, df, readonly_columns=readonly_columns)
+            apply_editor_changes(s, model, changes, df)
             if post_sync:
                 post_sync(s)
 
@@ -51,7 +49,23 @@ def handle_editor_save(
 def render_main_tab():
     st.title("Checklist e Auditoria")
 
-    df_check = conn.query("SELECT * FROM checklist_items", ttl=0)
+    df_check = conn.query(
+        """
+    SELECT 
+        checklist_items.*, 
+        CASE ncs.status
+            WHEN 'DRAFT' THEN 'Rascunho'
+            WHEN 'OPEN' THEN 'Aberta'
+            WHEN 'CLOSED' THEN 'Encerrada'
+            WHEN 'ESCALATED' THEN 'Escalada'
+            WHEN 'CLOSED_EXCEPTION' THEN 'Fechada por Exceção'
+            ELSE ''
+        END AS nc_status
+    FROM checklist_items 
+    LEFT JOIN ncs ON ncs.id = checklist_items.id
+    """,
+        ttl=0,
+    )
 
     valid_items = df_check[
         ~df_check["status"].isin(
@@ -81,7 +95,7 @@ def render_main_tab():
             "error_msg": "Erro ao salvar o checklist.",
             "post_sync": sync_checklist_ncs,
         },
-        column_order=("id", "question", "status", "workflow_status"),
+        column_order=("id", "question", "status", "nc_status"),
         column_config={
             "id": st.column_config.NumberColumn("ID", disabled=True),
             "question": st.column_config.TextColumn("Pergunta", required=True),
@@ -92,12 +106,10 @@ def render_main_tab():
                 format_func=lambda s: s.label,
                 required=True,
             ),
-            "workflow_status": st.column_config.SelectboxColumn(
+            "nc_status": st.column_config.TextColumn(
                 "Status",
-                options=tuple(ChecklistItem.WorkflowStatus),
-                default=ChecklistItem.WorkflowStatus.OPEN.value,
-                format_func=lambda s: s.label,
-                required=True,
+                disabled=True,
+                default="",
             ),
         },
     )

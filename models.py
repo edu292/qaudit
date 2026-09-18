@@ -1,3 +1,4 @@
+import contextlib
 from datetime import datetime
 from enum import StrEnum
 
@@ -6,6 +7,7 @@ from sqlalchemy import (
     ForeignKey,
     event,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -52,29 +54,11 @@ class ChecklistItem(Base):
             }
             return labels[self]
 
-    class WorkflowStatus(StrEnum):
-        OPEN = "OPEN"
-        CLOSED = "CLOSED"
-        CLOSED_EXCEPTION = "CLOSED_EXCEPTION"
-
-        @property
-        def label(self) -> str:
-            labels = {
-                self.OPEN: "Aberta",
-                self.CLOSED: "Fechada",
-                self.CLOSED_EXCEPTION: "Fechada por Exceção",
-            }
-            return labels[self]
-
     __tablename__ = "checklist_items"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     question: Mapped[str] = mapped_column()
     status: Mapped[Status] = mapped_column(default=Status.PENDING.value)
-    workflow_status: Mapped[WorkflowStatus] = mapped_column(
-        default=WorkflowStatus.OPEN.value
-    )
-
     nc: Mapped[Nc | None] = relationship(
         back_populates="checklist_item", cascade="all, delete-orphan", uselist=False
     )
@@ -156,16 +140,16 @@ class Severity(Base):
 
     ncs: Mapped[list[Nc]] = relationship(back_populates="severity")
 
+    def __str__(self) -> str:
+        parts = []
+        if self.days:
+            parts.append(f"{self.days} dia{'s' if self.days != 1 else ''}")
+        if self.hours:
+            parts.append(f"{self.hours}h")
+        if self.minutes:
+            parts.append(f"{self.minutes}min")
 
-def _add_missing_columns(engine, table_name, column_defs):
-    with engine.connect() as c:
-        existing = {row[1] for row in c.exec_driver_sql(f"PRAGMA table_info({table_name})")}
-        for col_name, col_type in column_defs.items():
-            if col_name not in existing:
-                c.exec_driver_sql(
-                    f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
-                )
-        c.commit()
+        return f"{self.name}  |" + " ".join(parts)
 
 
 def init_db(conn):
@@ -176,28 +160,6 @@ def init_db(conn):
         cursor.close()
 
     Base.metadata.create_all(conn.engine)
-    _add_missing_columns(conn.engine, "ncs", {"corrective_action": "TEXT"})
-    _add_missing_columns(conn.engine, "smtp_config", {"project_name": "TEXT"})
-    _add_missing_columns(
-        conn.engine,
-        "checklist_items",
-        {"workflow_status": "TEXT NOT NULL DEFAULT 'OPEN'"},
-    )
-    with conn.engine.connect() as c:
-        c.exec_driver_sql(
-            """
-            UPDATE checklist_items
-            SET workflow_status = (
-                SELECT ncs.status FROM ncs WHERE ncs.checklist_item_id = checklist_items.id
-            )
-            WHERE id IN (
-                SELECT checklist_item_id FROM ncs WHERE status IN ('CLOSED', 'CLOSED_EXCEPTION')
-            )
-            """
-        )
-        c.commit()
-
-    with conn.session as s:
-        if not s.get(SmtpConfig, 1):
-            s.add(SmtpConfig(id=1, port=587))
-            s.commit()
+    with contextlib.suppress(IntegrityError), conn.session as s:
+        s.add(SmtpConfig(id=1, port=587))
+        s.commit()

@@ -4,17 +4,6 @@ import pandas as pd
 from holidays import country_holidays
 
 
-def format_severity_duration(days: int, hours: int, minutes: int) -> str:
-    parts = []
-    if days:
-        parts.append(f"{days} dia{'s' if days != 1 else ''}")
-    if hours:
-        parts.append(f"{hours}h")
-    if minutes:
-        parts.append(f"{minutes}min")
-    return " ".join(parts) if parts else "0 min"
-
-
 def get_delta_in_business_hours(
     base: datetime,
     days: int = 0,
