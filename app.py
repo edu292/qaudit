@@ -51,18 +51,19 @@ def render_main_tab():
 
     df_check = conn.query(
         """
-    SELECT 
-        checklist_items.*, 
-        CASE ncs.status
-            WHEN 'DRAFT' THEN 'Rascunho'
-            WHEN 'OPEN' THEN 'Aberta'
-            WHEN 'CLOSED' THEN 'Encerrada'
-            WHEN 'ESCALATED' THEN 'Escalada'
-            WHEN 'CLOSED_EXCEPTION' THEN 'Fechada por Exceção'
+    SELECT
+        checklist_items.*,
+        CASE
+            WHEN ncs.status = 'DRAFT' THEN 'Rascunho'
+            WHEN ncs.status = 'OPEN' THEN 'Aberta'
+            WHEN ncs.status = 'CLOSED' THEN 'Encerrada'
+            WHEN ncs.status = 'ESCALATED' THEN 'Escalada'
+            WHEN ncs.status = 'CLOSED_EXCEPTION' THEN 'Fechada por Exceção'
+            WHEN checklist_items.status = 'CONFORMANT' THEN 'Fechada'
             ELSE ''
         END AS nc_status
-    FROM checklist_items 
-    LEFT JOIN ncs ON ncs.id = checklist_items.id
+    FROM checklist_items
+    LEFT JOIN ncs ON ncs.checklist_item_id = checklist_items.id
     """,
         ttl=0,
     )
@@ -132,6 +133,8 @@ def render_main_tab():
         severities = s.query(Severity).all()
 
         user_opts = {u.id: u.name for u in users}
+        qa_opts = {u.id: u.name for u in users if u.role == User.Role.QA}
+        manager_opts = {u.id: u.name for u in users if u.role == User.Role.MANAGER}
         sev_opts = {
             sv.id: f"{sv.name} ({sv.days}d {sv.hours}h {sv.minutes}m)"
             for sv in severities
@@ -141,11 +144,13 @@ def render_main_tab():
             st.info("Nenhuma Não Conformidade registrada.")
 
         for nc in ncs:
-            render_nc_card(nc, user_opts, sev_opts)
+            render_nc_card(nc, user_opts, qa_opts, manager_opts, sev_opts)
 
 
 @st.fragment(parallel=True)
-def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
+def render_nc_card(
+    nc: Nc, user_opts: dict, qa_opts: dict, manager_opts: dict, sev_opts: dict
+):
     now = datetime.now()
 
     is_draft = nc.status == Nc.Status.DRAFT.value
@@ -170,7 +175,7 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
             key=f"corrective_action_{nc.id}",
         )
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             sel_user_id = st.selectbox(
                 "Responsável",
@@ -184,6 +189,18 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
                 key=f"user_{nc.id}",
             )
         with col2:
+            sel_qa_id = st.selectbox(
+                "Auditor Responsável (QA)",
+                placeholder="Selecione...",
+                format_func=lambda uid: qa_opts[uid],
+                options=list(qa_opts.keys()),
+                index=None
+                if not nc.qa_responsible_id
+                else list(qa_opts.keys()).index(nc.qa_responsible_id),
+                disabled=not is_draft,
+                key=f"qa_{nc.id}",
+            )
+        with col3:
             sel_sev_id = st.selectbox(
                 "Categoria",
                 placeholder="Selecione...",
@@ -196,11 +213,22 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
                 key=f"sev_{nc.id}",
             )
 
+        sel_manager_id = None
         if nc.status == nc.Status.OPEN:
             color = "red" if is_overdue else "gray"
             st.markdown(
                 f":{color}[**Prazo:** {nc.deadline.strftime('%d/%m/%Y %H:%M')}]"
             )
+
+            if is_overdue:
+                sel_manager_id = st.selectbox(
+                    "Gerente para Escalonamento",
+                    placeholder="Selecione...",
+                    options=list(manager_opts.keys()),
+                    format_func=lambda uid: manager_opts[uid],
+                    index=None,
+                    key=f"manager_{nc.id}",
+                )
 
         st.markdown("<hr style='margin: 0.5rem 0 1rem 0;'>", unsafe_allow_html=True)
         act_col1, act_col2, _ = st.columns([0.30, 0.30, 0.40], gap="small")
@@ -221,7 +249,12 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
                     "Salvar Rascunho", key=f"draft_{nc.id}", width="stretch"
                 ):
                     run_action(
-                        save_draft, details, corrective_action, sel_user_id, sel_sev_id
+                        save_draft,
+                        details,
+                        corrective_action,
+                        sel_user_id,
+                        sel_qa_id,
+                        sel_sev_id,
                     )
                     st.toast("Rascunho atualizado.")
 
@@ -233,6 +266,7 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
                         details,
                         corrective_action,
                         sel_user_id,
+                        sel_qa_id,
                         sel_sev_id,
                         now,
                     )
@@ -263,8 +297,11 @@ def render_nc_card(nc: Nc, user_opts: dict, sev_opts: dict):
                         disabled=not is_overdue,
                         help=help_text,
                     ):
-                        run_action(escalate_nc, now)
-                        st.toast("NC escalada ao gestor.", icon="⚠️")
+                        run_action(escalate_nc, now, sel_manager_id)
+                        st.toast(
+                            f"NC escalada para {manager_opts[sel_manager_id]}.",
+                            icon="⚠️",
+                        )
                         st.rerun()
 
                 elif nc.status == nc.Status.ESCALATED:

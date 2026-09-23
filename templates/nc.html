@@ -133,7 +133,9 @@
                                        style="border-collapse: collapse">
                                     <tr>
                                         {{ field_block("Descrição", nc.checklist_item.question, "34%") }}
-                                        {{ field_block("Classificação", (nc.severity.name)|string, "33%") }}
+                                        {{ field_block("Classificação",
+                                            nc.severity.name ~ " | " ~ nc.severity.days ~ "D " ~ nc.severity.hours ~ "H " ~ nc.severity.minutes ~ "M",
+                                            "33%") }}
                                         {{ field_block("Ação Corretiva Indicada",
                                             nc.corrective_action or "A definir pelo responsável.",
                                             "33%") }}

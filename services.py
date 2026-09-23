@@ -5,14 +5,6 @@ from models import ChecklistItem, Nc, Severity, SmtpConfig, User
 from utils import get_delta_in_business_hours
 
 
-def _get_manager(session):
-    return session.scalars(select(User).where(User.role.is_(User.Role.MANAGER))).first()
-
-
-def _get_qa_responsible(session):
-    return session.scalars(select(User).where(User.role.is_(User.Role.QA))).first()
-
-
 def _get_project_name(session):
     config = session.get(SmtpConfig, 1)
     return config.project_name
@@ -58,29 +50,36 @@ def sync_checklist_ncs(session):
     session.execute(delete(Nc).where(Nc.id.in_(stale_drafts)))
 
 
-def save_draft(session, nc, details, corrective_action, user_id, sev_id):
+def save_draft(session, nc, details, corrective_action, user_id, qa_id, sev_id):
     nc.details = details
     nc.corrective_action = corrective_action
     nc.responsible_id = user_id
+    nc.qa_responsible_id = qa_id
     nc.severity_id = sev_id
     session.commit()
 
 
-def open_nc(session, nc, details, corrective_action, responsible_id, sev_id, now):
+def open_nc(
+    session, nc, details, corrective_action, responsible_id, qa_id, sev_id, now
+):
     if nc.status != Nc.Status.DRAFT:
         raise DomainError("Apenas rascunhos podem ser abertos.")
 
-    if not responsible_id or not sev_id:
-        raise DomainError("Responsável e Categoria são obrigatórios para abertura.")
+    if not responsible_id or not qa_id or not sev_id:
+        raise DomainError(
+            "Responsável, Auditor (QA) e Categoria são obrigatórios para abertura."
+        )
 
     sev = session.get(Severity, sev_id)
     responsible = session.get(User, responsible_id)
-    if not sev or not responsible:
-        raise DomainError("Responsável ou Categoria inválidos.")
+    qa_responsible = session.get(User, qa_id)
+    if not sev or not responsible or not qa_responsible:
+        raise DomainError("Responsável, Auditor (QA) ou Categoria inválidos.")
 
     nc.details = details
     nc.corrective_action = corrective_action
     nc.responsible = responsible
+    nc.qa_responsible = qa_responsible
     nc.severity = sev
     nc.opened_at = now
     nc.deadline = get_delta_in_business_hours(now, sev.days, sev.hours, sev.minutes)
@@ -88,7 +87,6 @@ def open_nc(session, nc, details, corrective_action, responsible_id, sev_id, now
     session.commit()
 
     project_name = _get_project_name(session)
-    qa_responsible = _get_qa_responsible(session)
 
     msg = render_nc_opened_email(nc, qa_responsible, project_name)
     send_email(session, msg)
@@ -104,18 +102,23 @@ def close_nc(session, nc, now, as_exception=False):
     session.commit()
 
 
-def escalate_nc(session, nc, now):
+def escalate_nc(session, nc, now, manager_id):
     if nc.status != Nc.Status.OPEN:
         raise DomainError("Apenas NCs abertas podem ser escaladas.")
     if not nc.is_overdue:
         raise DomainError("Prazo ainda vigente.")
+    if not manager_id:
+        raise DomainError("Selecione o gerente para escalonamento.")
+
+    manager = session.get(User, manager_id)
+    if not manager:
+        raise DomainError("Gerente inválido.")
 
     nc.status = Nc.Status.ESCALATED
     nc.escalated_at = now
+    nc.manager = manager
     session.commit()
 
-    manager = _get_manager(session)
     project_name = _get_project_name(session)
-    qa_responsible = _get_qa_responsible(session)
-    msg = render_nc_escalated_email(nc, qa_responsible, manager, project_name)
+    msg = render_nc_escalated_email(nc, nc.qa_responsible, manager, project_name)
     send_email(session, msg)

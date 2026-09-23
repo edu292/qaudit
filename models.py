@@ -36,7 +36,9 @@ class User(Base):
     email: Mapped[str] = mapped_column()
     role: Mapped[Role] = mapped_column(default=Role.STAFF)
 
-    ncs: Mapped[list[Nc]] = relationship(back_populates="responsible")
+    ncs: Mapped[list[Nc]] = relationship(
+        back_populates="responsible", foreign_keys="Nc.responsible_id"
+    )
 
 
 class SmtpConfig(Base):
@@ -107,6 +109,12 @@ class Nc(Base):
     responsible_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
     )
+    qa_responsible_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    manager_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
     severity_id: Mapped[int | None] = mapped_column(
         ForeignKey("severities.id", ondelete="RESTRICT")
     )
@@ -121,7 +129,11 @@ class Nc(Base):
     status: Mapped[Status] = mapped_column(default=Status.DRAFT)
 
     checklist_item: Mapped[ChecklistItem] = relationship(back_populates="nc")
-    responsible: Mapped[User | None] = relationship(back_populates="ncs")
+    responsible: Mapped[User | None] = relationship(
+        back_populates="ncs", foreign_keys=[responsible_id]
+    )
+    qa_responsible: Mapped[User | None] = relationship(foreign_keys=[qa_responsible_id])
+    manager: Mapped[User | None] = relationship(foreign_keys=[manager_id])
     severity: Mapped[Severity | None] = relationship(back_populates="ncs")
 
     TERMINAL_STATUSES = (Status.CLOSED, Status.CLOSED_EXCEPTION)
