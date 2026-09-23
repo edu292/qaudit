@@ -1,237 +1,192 @@
 {% macro field_block(label, value, width=none) %}
-<td
-  style="{% if width %}width:{{ width }};{% endif %}border:1px solid #999999;padding:0;vertical-align:top;"
->
-  <table
-    role="presentation"
-    width="100%"
-    cellspacing="0"
-    cellpadding="0"
-    style="border-collapse: collapse"
-  >
-    <tr>
-      <td
-        style="
-          background: #d9d9d9;
-          padding: 6px 10px;
-          font-weight: bold;
-          font-size: 13px;
-        "
-      >
-        {{ label }}
-      </td>
-    </tr>
-    <tr>
-      <td style="padding: 8px 10px; font-size: 13px">
-        {{ value or "&nbsp;" }}
-      </td>
-    </tr>
-  </table>
-</td>
-{% endmacro %} {% macro spacer() %}
-<tr>
-  <td style="height: 8px; line-height: 8px; font-size: 1px">&nbsp;</td>
-</tr>
+    <td style="{% if width %}width:{{ width }};
+               {% endif %}border:1px solid #999999;
+               padding:0;
+               vertical-align:top">
+        <table role="presentation"
+               width="100%"
+               cellspacing="0"
+               cellpadding="0"
+               style="border-collapse: collapse">
+            <tr>
+                <td style="background: #d9d9d9;
+                           padding: 6px 10px;
+                           font-weight: bold;
+                           font-size: 13px">{{ label }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 10px; font-size: 13px">{{ value or "&nbsp;" }}</td>
+            </tr>
+        </table>
+    </td>
 {% endmacro %}
-
-<!doctype html>
+{% macro spacer() %}
+    <tr>
+        <td style="height: 8px; line-height: 8px; font-size: 1px">&nbsp;</td>
+    </tr>
+{% endmacro %}
+<!DOCTYPE html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="utf-8" />
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  </head>
-  <body style="margin: 0; padding: 0; background: #f2f2f2">
-    <table
-      role="presentation"
-      width="100%"
-      cellspacing="0"
-      cellpadding="0"
-      style="background: #f2f2f2; padding: 20px 0"
-    >
-      <tr>
-        <td align="center">
-          <table
-            role="presentation"
-            width="700"
-            cellspacing="0"
-            cellpadding="0"
-            style="
-              background: #ffffff;
-              border: 1px solid #999999;
-              font-family: Calibri, Arial, sans-serif;
-              border-collapse: collapse;
-            "
-          >
+    <head>
+        <meta charset="utf-8" />
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    </head>
+    <body style="margin: 0; padding: 0; background: #f2f2f2">
+        <table role="presentation"
+               width="100%"
+               cellspacing="0"
+               cellpadding="0"
+               style="background: #f2f2f2;
+                      padding: 20px 0">
             <tr>
-              <td
-                style="
-                  padding: 16px 16px 8px 16px;
-                  text-align: center;
-                  border-bottom: 1px solid #999999;
-                "
-              >
-                <span style="font-size: 18px; font-weight: bold"
-                  >Solicitação de Resolução de Não Conformidade #{{ nc.id
-                  }}</span
-                >
-              </td>
+                <td align="center">
+                    <table role="presentation"
+                           width="700"
+                           cellspacing="0"
+                           cellpadding="0"
+                           style="background: #ffffff;
+                                  border: 1px solid #999999;
+                                  font-family: Calibri, Arial, sans-serif;
+                                  border-collapse: collapse">
+                        <tr>
+                            <td style="padding: 16px 16px 8px 16px;
+                                       text-align: center;
+                                       border-bottom: 1px solid #999999">
+                                <span style="font-size: 18px; font-weight: bold">
+                                    {% if nc.escalated_at %}
+                                        [ESCALONAMENTO] Resolução de Não Conformidade #{{ nc.id }}
+                                    {% else %}
+                                        Solicitação de Resolução de Não Conformidade #{{ nc.id }}
+                                    {% endif %}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0">
+                                <table role="presentation"
+                                       width="100%"
+                                       cellspacing="0"
+                                       cellpadding="0"
+                                       style="border-collapse: collapse">
+                                    <tr>{{ field_block("Projeto:", project_name or "-") }}</tr>
+                                </table>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0">
+                                <table role="presentation"
+                                       width="100%"
+                                       cellspacing="0"
+                                       cellpadding="0"
+                                       style="border-collapse: collapse">
+                                    <tr>
+                                        {{ field_block("Responsável pela Resolução:",
+                                            nc.responsible.name) }}
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0">
+                                <table role="presentation"
+                                       width="100%"
+                                       cellspacing="0"
+                                       cellpadding="0"
+                                       style="border-collapse: collapse">
+                                    <tr>
+                                        {{ field_block("Data da 1ª Solicitação:",
+                                            nc.opened_at.strftime('%d/%m/%Y %H:%M') if nc.opened_at,
+                                            "50%") }}
+                                        {{ field_block("Prazo Inicial de Resolução:",
+                                            nc.deadline.strftime('%d/%m/%Y %H:%M') if nc.deadline,
+                                            "50%") }}
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 0">
+                                <table role="presentation"
+                                       width="100%"
+                                       cellspacing="0"
+                                       cellpadding="0"
+                                       style="border-collapse: collapse">
+                                    <tr>
+                                        {{ field_block("Nível de Escalonamento:",
+                                            "1 (Escalado à Gerência)" if nc.escalated_at else "0 (Abertura Direta)",
+                                            "50%") }}
+                                        {{ field_block("Auditor Responsável (QA):",
+                                            qa_responsible.name,
+                                            "50%") }}
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                        {{ spacer() }}
+                        <tr>
+                            <td style="padding: 0">
+                                <table role="presentation"
+                                       width="100%"
+                                       cellspacing="0"
+                                       cellpadding="0"
+                                       style="border-collapse: collapse">
+                                    <tr>
+                                        {{ field_block("Descrição", nc.checklist_item.question, "34%") }}
+                                        {{ field_block("Classificação", (nc.severity.name)|string, "33%") }}
+                                        {{ field_block("Ação Corretiva Indicada",
+                                            nc.corrective_action or "A definir pelo responsável.",
+                                            "33%") }}
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                        {% if nc.escalated_at %}
+                            {{ spacer() }}
+                            <tr>
+                                <td style="padding: 0">
+                                    <table role="presentation"
+                                           width="100%"
+                                           cellspacing="0"
+                                           cellpadding="0"
+                                           style="border-collapse: collapse">
+                                        <tr>
+                                            {{ field_block("Histórico de Escalonamento",
+                                                "Escalado em " ~ nc.escalated_at.strftime('%d/%m/%Y %H:%M') ~ " por vencimento de prazo." if nc.escalated_at,
+                                                "50%") }}
+                                            {{ field_block("Gestor Acionado",
+                                                manager.name,
+                                                "50%") }}
+                                        </tr>
+                                    </table>
+                                </td>
+                            </tr>
+                        {% endif %}
+                        {{ spacer() }}
+                        <tr>
+                            <td style="border: 1px solid #999999; padding: 0">
+                                <table role="presentation"
+                                       width="100%"
+                                       cellspacing="0"
+                                       cellpadding="0"
+                                       style="border-collapse: collapse">
+                                    <tr>
+                                        <td style="background: #d9d9d9;
+                                                   padding: 6px 10px;
+                                                   font-weight: bold;
+                                                   font-size: 13px">Observações:</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 10px; font-size: 13px; font-weight: normal">
+                                            {{ nc.details or "Nenhuma observação adicional." }}
+                                        </td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
             </tr>
-            <tr>
-              <td style="padding: 0">
-                <table
-                  role="presentation"
-                  width="100%"
-                  cellspacing="0"
-                  cellpadding="0"
-                  style="border-collapse: collapse"
-                >
-                  <tr>
-                    {{ field_block("Projeto:", project_name or "-") }}
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 0">
-                <table
-                  role="presentation"
-                  width="100%"
-                  cellspacing="0"
-                  cellpadding="0"
-                  style="border-collapse: collapse"
-                >
-                  <tr>
-                    {{ field_block("Responsável pela Resolução:",
-                    nc.responsible.name if nc.responsible else user.name) }}
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 0">
-                <table
-                  role="presentation"
-                  width="100%"
-                  cellspacing="0"
-                  cellpadding="0"
-                  style="border-collapse: collapse"
-                >
-                  <tr>
-                    {{ field_block("Data da 1ª Solicitação:",
-                    nc.opened_at.strftime('%d/%m/%Y %H:%M') if nc.opened_at else
-                    "-", "50%") }} {{ field_block("Prazo de Resolução:",
-                    nc.deadline.strftime('%d/%m/%Y %H:%M') if nc.deadline else
-                    "-", "50%") }}
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 0">
-                <table
-                  role="presentation"
-                  width="100%"
-                  cellspacing="0"
-                  cellpadding="0"
-                  style="border-collapse: collapse"
-                >
-                  <tr>
-                    {{ field_block("Nº de Escalonamento:", escalation_count) }}
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding: 0">
-                <table
-                  role="presentation"
-                  width="100%"
-                  cellspacing="0"
-                  cellpadding="0"
-                  style="border-collapse: collapse"
-                >
-                  <tr>
-                    {{ field_block("Responsável por QA:", qa_responsible_name or
-                    "-") }}
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            {{ spacer() }}
-            <tr>
-              <td style="padding: 0">
-                <table
-                  role="presentation"
-                  width="100%"
-                  cellspacing="0"
-                  cellpadding="0"
-                  style="border-collapse: collapse"
-                >
-                  <tr>
-                    {{ field_block("Descrição", nc.checklist_item.question,
-                    "34%") }} {{ field_block("Classificação", str(nc.severity or
-                    sev), "33%") }} {{ field_block("Ação Corretiva Indicada",
-                    nc.corrective_action or "Não informada.", "33%") }}
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            {{ spacer() }}
-            <tr>
-              <td style="padding: 0">
-                <table
-                  role="presentation"
-                  width="100%"
-                  cellspacing="0"
-                  cellpadding="0"
-                  style="border-collapse: collapse"
-                >
-                  <tr>
-                    {{ field_block("Histórico de Escalonamento",
-                    escalation_history, "34%") }} {{ field_block("Superior
-                    Responsável", superior_name or "-", "33%") }} {{
-                    field_block("Prazo para Resolução", resolution_deadline or
-                    "-", "33%") }}
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            {{ spacer() }}
-            <tr>
-              <td style="border: 1px solid #999999; padding: 0">
-                <table
-                  role="presentation"
-                  width="100%"
-                  cellspacing="0"
-                  cellpadding="0"
-                  style="border-collapse: collapse"
-                >
-                  <tr>
-                    <td
-                      style="
-                        background: #d9d9d9;
-                        padding: 6px 10px;
-                        font-weight: bold;
-                        font-size: 13px;
-                      "
-                    >
-                      Observações:
-                    </td>
-                  </tr>
-                  <tr>
-                    <td
-                      style="padding: 10px; font-size: 13px; font-weight: bold"
-                    >
-                      {{ nc.details or "&nbsp;" }}
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
+        </table>
+    </body>
 </html>

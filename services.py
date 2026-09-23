@@ -6,7 +6,11 @@ from utils import get_delta_in_business_hours
 
 
 def _get_manager(session):
-    return session.scalars(select(User).where(User.is_manager.is_(True))).first()
+    return session.scalars(select(User).where(User.role.is_(User.Role.MANAGER))).first()
+
+
+def _get_qa_responsible(session):
+    return session.scalars(select(User).where(User.role.is_(User.Role.QA))).first()
 
 
 def _get_project_name(session):
@@ -62,31 +66,31 @@ def save_draft(session, nc, details, corrective_action, user_id, sev_id):
     session.commit()
 
 
-def open_nc(session, nc, details, corrective_action, user_id, sev_id, now):
+def open_nc(session, nc, details, corrective_action, responsible_id, sev_id, now):
     if nc.status != Nc.Status.DRAFT:
         raise DomainError("Apenas rascunhos podem ser abertos.")
 
-    if not user_id or not sev_id:
-        raise DomainError("Responsável e Gravidade são obrigatórios para abertura.")
+    if not responsible_id or not sev_id:
+        raise DomainError("Responsável e Categoria são obrigatórios para abertura.")
 
     sev = session.get(Severity, sev_id)
-    user = session.get(User, user_id)
-    if not sev or not user:
-        raise DomainError("Responsável ou Gravidade inválidos.")
+    responsible = session.get(User, responsible_id)
+    if not sev or not responsible:
+        raise DomainError("Responsável ou Categoria inválidos.")
 
     nc.details = details
     nc.corrective_action = corrective_action
-    nc.responsible_id = user_id
-    nc.severity_id = sev_id
+    nc.responsible = responsible
+    nc.severity = sev
     nc.opened_at = now
     nc.deadline = get_delta_in_business_hours(now, sev.days, sev.hours, sev.minutes)
     nc.status = Nc.Status.OPEN
     session.commit()
 
-    manager = _get_manager(session)
     project_name = _get_project_name(session)
+    qa_responsible = _get_qa_responsible(session)
 
-    msg = render_nc_opened_email(nc, user, sev, project_name, manager)
+    msg = render_nc_opened_email(nc, qa_responsible, project_name)
     send_email(session, msg)
 
 
@@ -112,5 +116,6 @@ def escalate_nc(session, nc, now):
 
     manager = _get_manager(session)
     project_name = _get_project_name(session)
-    msg = render_nc_escalated_email(nc, manager, project_name)
+    qa_responsible = _get_qa_responsible(session)
+    msg = render_nc_escalated_email(nc, qa_responsible, manager, project_name)
     send_email(session, msg)

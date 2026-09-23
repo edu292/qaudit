@@ -16,11 +16,25 @@ class Base(DeclarativeBase):
 
 
 class User(Base):
+    class Role(StrEnum):
+        STAFF = "STAFF"
+        QA = "QA"
+        MANAGER = "MANAGER"
+
+        @property
+        def label(self) -> str:
+            labels = {
+                self.STAFF: "Colaborador",
+                self.QA: "QA",
+                self.MANAGER: "Gerente",
+            }
+            return labels[self]
+
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(unique=True)
     email: Mapped[str] = mapped_column()
-    is_manager: Mapped[bool] = mapped_column(default=False)
+    role: Mapped[Role] = mapped_column(default=Role.STAFF)
 
     ncs: Mapped[list[Nc]] = relationship(back_populates="responsible")
 

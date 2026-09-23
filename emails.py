@@ -20,38 +20,33 @@ def _build_email_message(subject, html_body, to_email):
     return msg
 
 
-def render_nc_opened_email(nc, user, sev, project_name, manager):
+def render_nc_opened_email(
+    nc,
+    qa_responsible,
+    project_name,
+):
     template = _env.get_template("nc.html")
     body = template.render(
         nc=nc,
-        user=user,
-        sev=sev,
         project_name=project_name,
-        qa_responsible_name=manager.name,
-        escalation_count="0",
-        escalation_history="Nenhum",
-        superior_name="-",
-        resolution_deadline="-",
+        qa_responsible=qa_responsible,
+        is_escalated=False,
     )
     return _build_email_message(
-        f"[Auditoria] NC #{nc.id} {nc.checklist_item.question[:45]}... [{sev}]",
+        f"[Auditoria] NC #{nc.id} {nc.checklist_item.question[:45]}... [{nc.severity}]",
         body,
-        user.email,
+        nc.responsible.email,
     )
 
 
-def render_nc_escalated_email(nc, manager, project_name):
+def render_nc_escalated_email(nc, qa_responsible, manager, project_name):
     template = _env.get_template("nc.html")
     body = template.render(
         nc=nc,
         project_name=project_name,
-        qa_responsible_name=manager.name,
-        escalation_count="1",
-        escalation_history=(
-            f"Escalado em {nc.escalated_at.strftime('%d/%m/%Y %H:%M')} por prazo vencido"
-        ),
-        superior_name=manager.name,
-        resolution_deadline=nc.deadline.strftime("%d/%m/%Y %H:%M"),
+        qa_responsible=qa_responsible,
+        manager=manager,
+        is_escalated=True,
     )
     return _build_email_message(
         f"[PEDIDO ESCALONAMENTO] NC #{nc.id}: {nc.checklist_item.question[:45]}...",

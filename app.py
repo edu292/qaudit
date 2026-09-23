@@ -335,7 +335,6 @@ def render_users_tab():
     st.title("Gestão de Usuários")
 
     df_users = conn.query("SELECT * FROM users", ttl=0)
-    df_users["is_manager"] = df_users["is_manager"].astype(bool)
 
     st.data_editor(
         df_users,
@@ -350,11 +349,17 @@ def render_users_tab():
             "success_msg": "Usuários salvos com sucesso!",
             "error_msg": "Erro ao salvar: O nome de usuário já existe.",
         },
-        column_order=("name", "email", "is_manager"),
+        column_order=("name", "email", "role"),
         column_config={
             "name": st.column_config.TextColumn("Nome", required=True),
             "email": st.column_config.TextColumn("E-mail", required=True),
-            "is_manager": st.column_config.CheckboxColumn("É Gerente?", default=False),
+            "role": st.column_config.SelectboxColumn(
+                "Função",
+                default=User.Role.STAFF.value,
+                format_func=lambda r: r.label,
+                options=tuple(User.Role),
+                required=True,
+            ),
         },
     )
 
